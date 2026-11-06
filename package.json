@@ -1,7 +1,7 @@
 {
-  "name": "udara",
+  "name": "udara-jakarta",
   "version": "1.0.0",
-  "description": "Fetch web pages, extract data by pattern, store it in SQLite, and serve it through an HTTP API",
+  "description": "Collects air-quality readings from the Udara Jakarta, stores them in SQLite, and serves them through a small HTTP API.",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
