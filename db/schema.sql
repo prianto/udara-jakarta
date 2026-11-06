@@ -30,19 +30,21 @@ CREATE INDEX IF NOT EXISTS idx_stations_operator_id ON stations (operator_id);
 CREATE INDEX IF NOT EXISTS idx_stations_kota        ON stations (kota);
 
 CREATE TABLE IF NOT EXISTS measurements (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  station_id  INTEGER REFERENCES stations (id) ON UPDATE CASCADE ON DELETE SET NULL,
-  wind_speed  REAL,
-  humidity    REAL,
-  temperature REAL,
-  pm25_index  INTEGER,
-  pm10_index  INTEGER,
-  co_index    INTEGER,
-  so2_index   INTEGER,
-  no2_index   INTEGER,
-  o3_index    INTEGER,
-  ispu_index  INTEGER,
-  measured_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', '+7 hours'))
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  station_id         INTEGER REFERENCES stations (id) ON UPDATE CASCADE ON DELETE SET NULL,
+  wind_speed         REAL,
+  humidity           REAL,
+  temperature        REAL,
+  pm25_index         INTEGER,
+  pm10_index         INTEGER,
+  co_index           INTEGER,
+  so2_index          INTEGER,
+  no2_index          INTEGER,
+  o3_index           INTEGER,
+  ispu_index         INTEGER,
+  ispu_source        TEXT,                            -- parameter behind the ISPU, lowercase, no dot: pm25, pm10, o3 ...
+  ispu_concentration REAL,                            -- its concentration, number only (9.81 for "9.81 ug/m3")
+  measured_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', '+7 hours'))
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_measurements_station_time ON measurements (station_id, measured_at);

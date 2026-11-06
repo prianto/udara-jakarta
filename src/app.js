@@ -1,5 +1,12 @@
 import Fastify from "fastify";
-import { addHours, isRealDate, startOfHour, toWibIso, wibNow } from "./time.js";
+import {
+  addHours,
+  isRealDate,
+  startOfHour,
+  startOfMinute,
+  toWibIso,
+  wibNow,
+} from "./time.js";
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
@@ -11,10 +18,16 @@ const SELECT_READINGS = `
   SELECT s.uuid AS station_uuid, s.spku AS station_name, s.lat, s.long,
          m.wind_speed, m.humidity, m.temperature,
          m.pm25_index, m.pm10_index, m.co_index, m.so2_index, m.no2_index, m.o3_index, m.ispu_index,
+         m.ispu_source, m.ispu_concentration,
          m.measured_at
     FROM measurements m
-    JOIN stations s ON s.id = m.station_id
-   WHERE m.measured_at >= :from AND m.measured_at < :until`;
+    JOIN stations s ON s.id = m.station_id`;
+
+// Windows over measured_at. The WIB string format sorts like time, so plain comparison works.
+const WINDOWS = {
+  halfOpen: "m.measured_at >= :from AND m.measured_at < :until", // [from, until)
+  upToNow: "m.measured_at > :from AND m.measured_at <= :until", //  (from, until]
+};
 
 function toRecord(row) {
   return {
@@ -32,6 +45,8 @@ function toRecord(row) {
     no2_index: row.no2_index,
     o3_index: row.o3_index,
     ispu_index: row.ispu_index,
+    ispu_source: row.ispu_source,
+    ispu_concentration: row.ispu_concentration,
     datetime: toWibIso(row.measured_at), // WIB, e.g. 2026-11-06T13:00:00+07:00
   };
 }
@@ -45,10 +60,10 @@ function toRecord(row) {
 export function buildApp({ db, clock = () => new Date(), logger = false }) {
   const app = Fastify({ logger });
 
-  // [from, until) are WIB strings; rows are readings with from <= measured_at < until
-  function readings(from, until, station) {
+  // `from` and `until` are WIB strings; `window` (see WINDOWS) says which ends are included
+  function readings(from, until, station, window = "halfOpen") {
     const params = { from, until };
-    let sql = SELECT_READINGS;
+    let sql = `${SELECT_READINGS} WHERE ${WINDOWS[window]}`;
     if (station) {
       sql += " AND s.uuid = :station";
       params.station = station.toLowerCase();
@@ -66,7 +81,9 @@ export function buildApp({ db, clock = () => new Date(), logger = false }) {
 
   const currentHourStart = () => startOfHour(wibNow(clock()));
 
-  // The current hour (date and hour, WIB) at the moment of the request.
+  // The last hour up to this very minute (WIB): until = now with the seconds dropped,
+  // from = until - 1 hour. The window is (from, until], so hourly data gives exactly one
+  // reading per station, and a reading stamped exactly `until` is included.
   app.get(
     "/api/measurements/now",
     {
@@ -75,8 +92,13 @@ export function buildApp({ db, clock = () => new Date(), logger = false }) {
       },
     },
     async (request) => {
-      const from = currentHourStart();
-      return readings(from, addHours(from, 1), request.query.station);
+      const until = startOfMinute(wibNow(clock()));
+      return readings(
+        addHours(until, -1),
+        until,
+        request.query.station,
+        "upToNow",
+      );
     },
   );
 

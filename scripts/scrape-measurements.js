@@ -196,6 +196,16 @@ export function parseStationPage(html) {
     clean(updateSpan.text()) ||
     clean(updateP.text()).replace(/^Update Terakhir:?/, "");
 
+  // <p>Parameter : <span id="ispu-parameter">PM<sub>2.5</sub></span></p>  -> "pm25"
+  // <p>Konsentrasi : <span id="ispu-concentration">9.81 µg/m³</span></p>   -> 9.81
+  const ispuSource =
+    clean($("#ispu-parameter").first().text())
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "") || null;
+  const ispuConcentration = firstNumber(
+    clean($("#ispu-concentration").first().text()),
+  );
+
   return {
     station: {
       operator: detail("Dioperasikan Oleh"),
@@ -210,6 +220,8 @@ export function parseStationPage(html) {
       humidity: weather("droplets"),
       temperature: weather("thermometer"),
       ...readIndexes($),
+      ispu_source: ispuSource,
+      ispu_concentration: ispuConcentration,
       measured_at: parseMeasuredAt(updateText),
     },
   };
@@ -218,11 +230,13 @@ export function parseStationPage(html) {
 const INSERT_MEASUREMENT = `
   INSERT INTO measurements (
     station_id, wind_speed, humidity, temperature,
-    pm25_index, pm10_index, co_index, so2_index, no2_index, o3_index, ispu_index, measured_at
+    pm25_index, pm10_index, co_index, so2_index, no2_index, o3_index, ispu_index,
+    ispu_source, ispu_concentration, measured_at
   )
   SELECT
     :station_id, :wind_speed, :humidity, :temperature,
-    :pm25_index, :pm10_index, :co_index, :so2_index, :no2_index, :o3_index, :ispu_index, :measured_at
+    :pm25_index, :pm10_index, :co_index, :so2_index, :no2_index, :o3_index, :ispu_index,
+    :ispu_source, :ispu_concentration, :measured_at
   WHERE NOT EXISTS (
     SELECT 1 FROM measurements WHERE station_id = :station_id AND measured_at = :measured_at
   )`;
@@ -305,7 +319,12 @@ export function saveScrape(
   }
 }
 
-async function main() {
+/**
+ * Scrape every station once. Returns the totals ({ inserted, existing, "no-timestamp",
+ * inactive, failed }); a failing station is logged and counted, it does not throw.
+ * Throws only for problems that stop the whole run (no base URL, no stations ...).
+ */
+export async function scrapeMeasurements() {
   const base = getBaseUrl();
   const db = openDb();
 
@@ -359,7 +378,7 @@ async function main() {
       `Done: ${totals.inserted} new, ${totals.existing} already stored, ` +
         `${totals["no-timestamp"]} without timestamp, ${totals.inactive} inactive, ${totals.failed} failed.`,
     );
-    if (totals.failed > 0) process.exitCode = 1;
+    return totals;
   } finally {
     db.close();
   }
@@ -369,8 +388,12 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 ) {
-  main().catch((err) => {
-    console.error(`Error: ${err.message}`);
-    process.exitCode = 1;
-  });
+  scrapeMeasurements()
+    .then((totals) => {
+      if (totals.failed > 0) process.exitCode = 1;
+    })
+    .catch((err) => {
+      console.error(`Error: ${err.message}`);
+      process.exitCode = 1;
+    });
 }

@@ -53,6 +53,10 @@ const pageHtml = `
       30°
     </p></div>
   </div>
+</div>
+<div>
+    <p>Parameter : <span id="ispu-parameter">PM<sub>2.5</sub></span></p>
+    <p>Konsentrasi : <span id="ispu-concentration">9.81 µg/m³</span></p>
 </div>`;
 
 const NOW = "2026-11-06 15:24:00"; // "current time" (WIB) used by the saveScrape tests
@@ -89,6 +93,8 @@ test("parseStationPage reads station details, weather and ISPU indexes", () => {
     o3_index: 27,
     pm10_index: 67,
     ispu_index: 142,
+    ispu_source: "pm25",
+    ispu_concentration: 9.81,
     measured_at: "2026-11-06 13:00:00", // exactly as shown on the page (WIB)
   });
 });
@@ -98,6 +104,24 @@ test("an index missing from the page becomes null", () => {
   const { measurement } = parseStationPage(html);
   assert.equal(measurement.o3_index, null);
   assert.equal(measurement.pm10_index, 67);
+});
+
+test("ISPU source is lowercase without dots, concentration is the number only", () => {
+  const o3 = pageHtml
+    .replace("PM<sub>2.5</sub>", "O<sub>3</sub>")
+    .replace("9.81 µg/m³", "120,5 µg/m³");
+  const { measurement } = parseStationPage(o3);
+  assert.equal(measurement.ispu_source, "o3");
+  assert.equal(measurement.ispu_concentration, 120.5);
+
+  const pm10 = parseStationPage(pageHtml.replace("PM<sub>2.5</sub>", "PM10"));
+  assert.equal(pm10.measurement.ispu_source, "pm10");
+
+  const none = parseStationPage(
+    pageHtml.replace(/<div>\s*<p>Parameter[\s\S]*?<\/div>/, ""),
+  );
+  assert.equal(none.measurement.ispu_source, null);
+  assert.equal(none.measurement.ispu_concentration, null);
 });
 
 test("date helpers keep the WIB time as displayed", () => {
@@ -147,6 +171,8 @@ test("saveScrape stores the reading once and fills in station details", () => {
     .prepare("SELECT * FROM measurements ORDER BY id LIMIT 1")
     .get();
   assert.equal(row.ispu_index, 142);
+  assert.equal(row.ispu_source, "pm25");
+  assert.equal(row.ispu_concentration, 9.81);
   assert.equal(row.measured_at, "2026-11-06 13:00:00");
 });
 

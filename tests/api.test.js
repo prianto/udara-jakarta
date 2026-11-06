@@ -7,8 +7,8 @@ import { buildApp } from "../src/app.js";
 const UUID_A = "2d554554-7567-4ac1-ab87-536260d2ba79";
 const UUID_B = "d0d713ca-1e2d-430c-980a-7c288f7f5210";
 
-// "now" for all tests: 2026-11-06 15:24 WIB (= 08:24 UTC)
-const clock = () => new Date("2026-11-06T08:24:00Z");
+// "now" for most tests: 2026-11-06 15:24:37 WIB (= 08:24:37 UTC); the seconds must be ignored
+const clock = () => new Date("2026-11-06T08:24:37Z");
 
 function setup() {
   const db = new DatabaseSync(":memory:");
@@ -17,9 +17,11 @@ function setup() {
     INSERT INTO stations (uuid, spku, lat, long) VALUES ('${UUID_A}', 'DKI01 Bundaran HI', -6.2445, 106.7906);
     INSERT INTO stations (uuid, spku) VALUES ('${UUID_B}', 'DKI17 SDN 07 Kramat Pela');
   `);
-  const insert = db.prepare(
-    "INSERT INTO measurements (station_id, measured_at, ispu_index, pm25_index, wind_speed) VALUES (?, ?, ?, ?, ?)",
-  );
+  const insert = db.prepare(`
+    INSERT INTO measurements
+      (station_id, measured_at, ispu_index, pm25_index, wind_speed, ispu_source, ispu_concentration)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`);
+
   // station A (id 1): every hour from yesterday 14:00 until today 16:00 (16:00 is "in the future")
   for (
     let t = Date.UTC(2026, 10, 5, 14);
@@ -32,16 +34,17 @@ function setup() {
       100,
       142,
       0.5,
+      "pm25",
+      9.81,
     );
   }
   // station B (id 2): two readings
-  insert.run(2, "2026-11-06 15:00:00", 50, 20, null);
-  insert.run(2, "2026-11-05 09:00:00", 55, 22, null);
+  insert.run(2, "2026-11-06 15:00:00", 50, 20, null, "pm10", 31.5);
+  insert.run(2, "2026-11-05 09:00:00", 55, 22, null, null, null);
   // a reading that belongs to no station must never show up
-  insert.run(null, "2026-11-06 15:00:00", 1, 1, null);
+  insert.run(null, "2026-11-06 15:00:00", 1, 1, null, null, null);
 
-  const app = buildApp({ db, clock });
-  return { db, app };
+  return { db, app: buildApp({ db, clock }) };
 }
 
 const get = async (app, url) => {
@@ -49,13 +52,13 @@ const get = async (app, url) => {
   return { status: res.statusCode, body: res.json() };
 };
 
-test("/now returns the readings of the current hour, one record per station", async () => {
+test("/now covers the last hour up to the current minute, one record per station", async () => {
   const { app } = setup();
   const { status, body } = await get(app, "/api/measurements/now");
 
   assert.equal(status, 200);
-  assert.equal(body.from, "2026-11-06T15:00:00+07:00");
-  assert.equal(body.until, "2026-11-06T16:00:00+07:00");
+  assert.equal(body.from, "2026-11-06T14:24:00+07:00"); // until - 1 hour
+  assert.equal(body.until, "2026-11-06T15:24:00+07:00"); // now, seconds dropped
   assert.equal(body.count, 2);
 
   assert.deepEqual(body.data[0], {
@@ -72,19 +75,45 @@ test("/now returns the readings of the current hour, one record per station", as
     no2_index: null,
     o3_index: null,
     ispu_index: 100,
+    ispu_source: "pm25",
+    ispu_concentration: 9.81,
     datetime: "2026-11-06T15:00:00+07:00",
   });
   assert.equal(body.data[1].station_name, "DKI17 SDN 07 Kramat Pela");
   assert.equal(body.data[1].lat_long, null); // no coordinates stored
+  assert.equal(body.data[1].ispu_source, "pm10");
+  assert.equal(body.data[1].ispu_concentration, 31.5);
 });
 
-test("/now is empty when the current hour has not been published yet", async () => {
+test("/now includes a reading stamped exactly at the current minute, but not one exactly an hour old", async () => {
+  const { db } = setup();
+  const at = (iso) => buildApp({ db, clock: () => new Date(iso) });
+
+  // 16:00:30 WIB -> window (15:00, 16:00]: the 16:00 reading yes, the 15:00 one no
+  const { body } = await get(
+    at("2026-11-06T09:00:30Z"),
+    "/api/measurements/now?station=" + UUID_A,
+  );
+  assert.equal(body.from, "2026-11-06T15:00:00+07:00");
+  assert.equal(body.until, "2026-11-06T16:00:00+07:00");
+  assert.equal(body.count, 1);
+  assert.equal(body.data[0].datetime, "2026-11-06T16:00:00+07:00");
+
+  // 15:59:59 WIB -> window (14:59, 15:59]: only the 15:00 reading
+  const earlier = await get(
+    at("2026-11-06T08:59:59Z"),
+    "/api/measurements/now?station=" + UUID_A,
+  );
+  assert.equal(earlier.body.count, 1);
+  assert.equal(earlier.body.data[0].datetime, "2026-11-06T15:00:00+07:00");
+});
+
+test("/now is empty when nothing was published in the last hour", async () => {
   const { db } = setup();
   db.exec(
     "DELETE FROM measurements WHERE measured_at >= '2026-11-06 15:00:00'",
   );
-  const app = buildApp({ db, clock });
-  const { body } = await get(app, "/api/measurements/now");
+  const { body } = await get(buildApp({ db, clock }), "/api/measurements/now");
   assert.equal(body.count, 0);
   assert.deepEqual(body.data, []);
 });

@@ -19,6 +19,9 @@ export const addHours = (wib, hours) => format(wibToMs(wib) + hours * HOUR_MS);
 /** "2026-11-06 15:24:09" -> "2026-11-06 15:00:00" */
 export const startOfHour = (wib) => `${wib.slice(0, 13)}:00:00`;
 
+/** "2026-11-06 15:24:09" -> "2026-11-06 15:24:00" */
+export const startOfMinute = (wib) => `${wib.slice(0, 16)}:00`;
+
 /** "2026-11-06 13:00:00" -> "2026-11-06T13:00:00+07:00" */
 export const toWibIso = (wib) => `${wib.replace(" ", "T")}+07:00`;
 

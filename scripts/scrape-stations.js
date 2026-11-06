@@ -101,7 +101,8 @@ export function saveStations(db, stations) {
   return result;
 }
 
-async function main() {
+/** Fetch the station list and save it. Returns { total, inserted, updated, unchanged }; throws on failure. */
+export async function scrapeStations() {
   const url = new URL("lokasi-spku", getBaseUrl());
   console.log(`Fetching ${url} ...`);
   const { stations, skipped } = parseStations(await fetchHtml(url));
@@ -118,10 +119,11 @@ async function main() {
 
   const db = openDb();
   try {
-    const { inserted, updated, unchanged } = saveStations(db, stations);
+    const result = saveStations(db, stations);
     console.log(
-      `Parsed ${stations.length} stations: ${inserted} new, ${updated} updated, ${unchanged} unchanged.`,
+      `Parsed ${stations.length} stations: ${result.inserted} new, ${result.updated} updated, ${result.unchanged} unchanged.`,
     );
+    return { total: stations.length, ...result };
   } finally {
     db.close();
   }
@@ -131,7 +133,7 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 ) {
-  main().catch((err) => {
+  scrapeStations().catch((err) => {
     console.error(`Error: ${err.message}`);
     process.exitCode = 1;
   });
