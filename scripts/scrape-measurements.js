@@ -1,19 +1,24 @@
-// Scrape the latest reading of every active station into the `measurements` table.
+// Scrape the latest reading of every station into the `measurements` table.
 // Usage: pnpm scrape:measurements     (needs DATASOURCE_BASEURL in .env or the environment)
 //
 // For each station it reads <DATASOURCE_BASEURL>/spku/<uuid> and:
 //   - inserts one row into `measurements` (skipped when that station already has a row
 //     with the same "Update Terakhir" time),
 //   - fills in the station's operator, type, procurement year, last maintenance and
-//     coordinates (a "-" on the page never overwrites a value already stored).
+//     coordinates (a "-" on the page never overwrites a value already stored),
+//   - sets stations.is_active = 0 when "Update Terakhir" is more than 24 hours ago,
+//     and back to 1 as soon as the station reports fresh data again.
 //
-// `measured_at` is stored in UTC ("YYYY-MM-DD HH:MM:SS"), like created_at/updated_at.
+// The source always shows WIB, and so does the database: `measured_at` is saved exactly as
+// displayed ("13.00 WIB" -> "2026-11-06 13:00:00"), like created_at/updated_at.
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import * as cheerio from "cheerio";
 import { fetchHtml, getBaseUrl, openDb } from "./lib/common.js";
+import { wibNow, wibToMs } from "../src/time.js";
 
 const REQUEST_DELAY_MS = Number(process.env.REQUEST_DELAY_MS ?? 300);
+const STALE_AFTER_MS = 24 * 3_600_000;
 
 // "name" in the JSON-LD variableMeasured list -> measurements column
 const INDEX_COLUMNS = {
@@ -46,7 +51,6 @@ const MONTHS = {
   des: 12,
   dec: 12,
 };
-const UTC_OFFSET_HOURS = { WIB: 7, WITA: 8, WIT: 9 };
 
 const clean = (text) => text.replace(/\s+/g, " ").trim();
 const pad = (n) => String(n).padStart(2, "0");
@@ -95,29 +99,23 @@ function findDate(text) {
   return { y, mo, d, rest: text.replace(m[0], " ") };
 }
 
-/** "2024-05-12", "12 Mei 2024" ... -> "2024-05-12"; anything else -> null. */
+/** "2024-05-12", "12 Mei 2025" ... -> "2024-05-12"; anything else -> null. */
 export function parseDate(text) {
   const found = text ? findDate(text) : null;
   return found ? `${found.y}-${pad(found.mo)}-${pad(found.d)}` : null;
 }
 
 /**
- * "Jumat, 6 November 2026 13.00 WIB" -> "2026-11-06 06:00:00" (UTC).
- * WIB/WITA/WIT are converted to UTC; no zone given means WIB.
+ * "Jumat, 6 November 2026 13.00 WIB" -> "2026-11-06 13:00:00".
+ * The source always shows WIB, so the time is kept exactly as displayed (the zone
+ * text is ignored). A date without a time is unusable and gives null.
  */
 export function parseMeasuredAt(text) {
   const found = text ? findDate(text) : null;
   if (!found) return null;
   const time = found.rest.match(/(\d{1,2})[.:](\d{2})/);
-  if (!time) return null;
-  const zone =
-    found.rest.match(/\b(WIB|WITA|WIT)\b/i)?.[1].toUpperCase() ?? "WIB";
-  const utc = new Date(
-    Date.UTC(found.y, found.mo - 1, found.d, Number(time[1]), Number(time[2])) -
-      UTC_OFFSET_HOURS[zone] * 3_600_000,
-  );
-  const iso = utc.toISOString();
-  return `${iso.slice(0, 10)} ${iso.slice(11, 19)}`;
+  if (!time || Number(time[1]) > 23 || Number(time[2]) > 59) return null;
+  return `${found.y}-${pad(found.mo)}-${pad(found.d)} ${pad(time[1])}:${time[2]}:00`;
 }
 
 /** Pull the ISPU indexes out of the application/ld+json Dataset block. */
@@ -230,10 +228,20 @@ const INSERT_MEASUREMENT = `
   )`;
 
 /**
- * Save one parsed page. Returns "inserted", "existing" (that reading is already stored)
- * or "no-timestamp" (the page had no usable "Update Terakhir", so no row was added).
+ * Save one parsed page. `now` is the current WIB time (injectable for tests).
+ * Returns { status, active }:
+ *   status "inserted"     - a new reading was stored
+ *           "existing"    - that reading was already stored
+ *           "no-timestamp" - the page had no usable "Update Terakhir", nothing stored
+ *   active true/false     - the station's is_active after this scrape (more than 24 hours
+ *                           since "Update Terakhir" = false); null when there was no timestamp
  */
-export function saveScrape(db, stationId, { station, measurement }) {
+export function saveScrape(
+  db,
+  stationId,
+  { station, measurement },
+  now = wibNow(),
+) {
   db.exec("BEGIN");
   try {
     let operatorId = null;
@@ -248,13 +256,17 @@ export function saveScrape(db, stationId, { station, measurement }) {
 
     const current = db
       .prepare(
-        `SELECT operator_id, sumber_data, tahun_pengadaan, perawatan_terakhir, lat, long
+        `SELECT operator_id, sumber_data, tahun_pengadaan, perawatan_terakhir, lat, long, is_active
            FROM stations WHERE id = ?`,
       )
       .get(stationId);
     if (!current) throw new Error(`station ${stationId} not found`);
 
-    // a missing value on the page ("-") keeps what is already stored
+    const active = measurement.measured_at
+      ? wibToMs(now) - wibToMs(measurement.measured_at) <= STALE_AFTER_MS
+      : null;
+
+    // a missing value on the page ("-", or no timestamp for is_active) keeps what is stored
     const incoming = {
       operator_id: operatorId,
       sumber_data: station.sumber_data,
@@ -262,6 +274,7 @@ export function saveScrape(db, stationId, { station, measurement }) {
       perawatan_terakhir: station.perawatan_terakhir,
       lat: station.lat,
       long: station.long,
+      is_active: active === null ? null : Number(active),
     };
     const next = Object.fromEntries(
       Object.keys(incoming).map((key) => [key, incoming[key] ?? current[key]]),
@@ -271,7 +284,7 @@ export function saveScrape(db, stationId, { station, measurement }) {
         `UPDATE stations SET
            operator_id = :operator_id, sumber_data = :sumber_data,
            tahun_pengadaan = :tahun_pengadaan, perawatan_terakhir = :perawatan_terakhir,
-           lat = :lat, long = :long
+           lat = :lat, long = :long, is_active = :is_active
          WHERE id = :id`,
       ).run({ ...next, id: stationId });
     }
@@ -285,7 +298,7 @@ export function saveScrape(db, stationId, { station, measurement }) {
     }
 
     db.exec("COMMIT");
-    return status;
+    return { status, active };
   } catch (err) {
     db.exec("ROLLBACK");
     throw err;
@@ -297,18 +310,23 @@ async function main() {
   const db = openDb();
 
   try {
+    // all stations, inactive ones too: they are checked again and re-activated once fresh
     const stations = db
-      .prepare(
-        "SELECT id, uuid, spku FROM stations WHERE is_active = 1 ORDER BY id",
-      )
+      .prepare("SELECT id, uuid, spku FROM stations ORDER BY id")
       .all();
     if (stations.length === 0) {
       throw new Error(
-        'No active stations in the database, run "pnpm scrape:stations" first',
+        'No stations in the database, run "pnpm scrape:stations" first',
       );
     }
 
-    const totals = { inserted: 0, existing: 0, "no-timestamp": 0, failed: 0 };
+    const totals = {
+      inserted: 0,
+      existing: 0,
+      "no-timestamp": 0,
+      inactive: 0,
+      failed: 0,
+    };
     const messages = {
       inserted: "new reading saved",
       existing: "already stored, skipped",
@@ -319,9 +337,17 @@ async function main() {
       const label = `[${i + 1}/${stations.length}] ${station.spku ?? station.uuid}`;
       try {
         const html = await fetchHtml(new URL(`spku/${station.uuid}`, base));
-        const status = saveScrape(db, station.id, parseStationPage(html));
+        const { status, active } = saveScrape(
+          db,
+          station.id,
+          parseStationPage(html),
+        );
         totals[status]++;
-        console.log(`${label}: ${messages[status]}`);
+        if (active === false) totals.inactive++;
+        console.log(
+          `${label}: ${messages[status]}` +
+            (active === false ? " (inactive: last update over 24 h ago)" : ""),
+        );
       } catch (err) {
         totals.failed++;
         console.error(`${label}: FAILED - ${err.message}`);
@@ -331,7 +357,7 @@ async function main() {
 
     console.log(
       `Done: ${totals.inserted} new, ${totals.existing} already stored, ` +
-        `${totals["no-timestamp"]} without timestamp, ${totals.failed} failed.`,
+        `${totals["no-timestamp"]} without timestamp, ${totals.inactive} inactive, ${totals.failed} failed.`,
     );
     if (totals.failed > 0) process.exitCode = 1;
   } finally {

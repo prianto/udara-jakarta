@@ -55,6 +55,8 @@ const pageHtml = `
   </div>
 </div>`;
 
+const NOW = "2026-11-06 15:24:00"; // "current time" (WIB) used by the saveScrape tests
+
 function newDb() {
   const db = new DatabaseSync(":memory:");
   db.exec(readFileSync(new URL("../db/schema.sql", import.meta.url), "utf8"));
@@ -87,7 +89,7 @@ test("parseStationPage reads station details, weather and ISPU indexes", () => {
     o3_index: 27,
     pm10_index: 67,
     ispu_index: 142,
-    measured_at: "2026-11-06 06:00:00", // 13.00 WIB in UTC
+    measured_at: "2026-11-06 13:00:00", // exactly as shown on the page (WIB)
   });
 });
 
@@ -98,22 +100,20 @@ test("an index missing from the page becomes null", () => {
   assert.equal(measurement.pm10_index, 67);
 });
 
-test("date helpers understand Indonesian dates and time zones", () => {
+test("date helpers keep the WIB time as displayed", () => {
   assert.equal(
     parseMeasuredAt("Jumat, 6 November 2026 13.00 WIB"),
-    "2026-11-06 06:00:00",
+    "2026-11-06 13:00:00",
   );
   assert.equal(
-    parseMeasuredAt("Sabtu, 7 Maret 2026 02:30 WITA"),
-    "2026-03-06 18:30:00",
+    parseMeasuredAt("Sabtu, 7 Maret 2026 02:30 WIB"),
+    "2026-03-07 02:30:00",
   );
-  assert.equal(
-    parseMeasuredAt("17 Agustus 2026 08.15 WIT"),
-    "2026-08-16 23:15:00",
-  );
-  assert.equal(parseMeasuredAt("2026-11-06 13:00"), "2026-11-06 06:00:00");
+  assert.equal(parseMeasuredAt("17 Agustus 2026 08.15"), "2026-08-17 08:15:00"); // zone text is optional
+  assert.equal(parseMeasuredAt("2026-11-06 00:00"), "2026-11-06 00:00:00");
   assert.equal(parseMeasuredAt("-"), null);
   assert.equal(parseMeasuredAt("6 November 2026"), null); // no time -> unusable
+  assert.equal(parseMeasuredAt("6 November 2026 25.00 WIB"), null); // impossible time
 
   assert.equal(parseDate("12 Mei 2025"), "2025-05-12");
   assert.equal(parseDate("2025-05-12"), "2025-05-12");
@@ -125,8 +125,8 @@ test("saveScrape stores the reading once and fills in station details", () => {
   const db = newDb();
   const parsed = parseStationPage(pageHtml);
 
-  assert.equal(saveScrape(db, 1, parsed), "inserted");
-  assert.equal(saveScrape(db, 1, parsed), "existing"); // same "Update Terakhir"
+  assert.equal(saveScrape(db, 1, parsed, NOW).status, "inserted");
+  assert.equal(saveScrape(db, 1, parsed, NOW).status, "existing"); // same "Update Terakhir"
 
   assert.equal(db.prepare("SELECT count(*) AS n FROM measurements").get().n, 1);
   assert.equal(db.prepare("SELECT count(*) AS n FROM operators").get().n, 1);
@@ -138,8 +138,8 @@ test("saveScrape stores the reading once and fills in station details", () => {
   assert.equal(station.operator_id, 1);
 
   // a newer reading is added
-  parsed.measurement.measured_at = "2026-11-06 07:00:00";
-  assert.equal(saveScrape(db, 1, parsed), "inserted");
+  parsed.measurement.measured_at = "2026-11-06 14:00:00";
+  assert.equal(saveScrape(db, 1, parsed, NOW).status, "inserted");
   assert.equal(db.prepare("SELECT count(*) AS n FROM measurements").get().n, 2);
   assert.equal(db.prepare("SELECT count(*) AS n FROM operators").get().n, 1);
 
@@ -147,7 +147,7 @@ test("saveScrape stores the reading once and fills in station details", () => {
     .prepare("SELECT * FROM measurements ORDER BY id LIMIT 1")
     .get();
   assert.equal(row.ispu_index, 142);
-  assert.equal(row.measured_at, "2026-11-06 06:00:00");
+  assert.equal(row.measured_at, "2026-11-06 13:00:00");
 });
 
 test('a "-" on the page does not wipe values already stored', () => {
@@ -156,7 +156,7 @@ test('a "-" on the page does not wipe values already stored', () => {
     "UPDATE stations SET tahun_pengadaan = 2020, perawatan_terakhir = '2025-05-12' WHERE id = 1",
   );
 
-  saveScrape(db, 1, parseStationPage(pageHtml)); // page says "-" for both
+  saveScrape(db, 1, parseStationPage(pageHtml), NOW); // page says "-" for both
   const station = db
     .prepare(
       "SELECT tahun_pengadaan, perawatan_terakhir FROM stations WHERE id = 1",
@@ -170,6 +170,34 @@ test("a page without a usable timestamp saves no measurement", () => {
   const db = newDb();
   const parsed = parseStationPage(pageHtml);
   parsed.measurement.measured_at = null;
-  assert.equal(saveScrape(db, 1, parsed), "no-timestamp");
+  const result = saveScrape(db, 1, parsed, NOW);
+  assert.deepEqual(result, { status: "no-timestamp", active: null });
   assert.equal(db.prepare("SELECT count(*) AS n FROM measurements").get().n, 0);
+  assert.equal(
+    db.prepare("SELECT is_active FROM stations WHERE id = 1").get().is_active,
+    1,
+  ); // untouched
+});
+
+test("stations go inactive when the last update is more than 24 hours old, and come back", () => {
+  const db = newDb();
+  const isActive = () =>
+    db.prepare("SELECT is_active FROM stations WHERE id = 1").get().is_active;
+  const scrapeAt = (measuredAt) => {
+    const parsed = parseStationPage(pageHtml);
+    parsed.measurement.measured_at = measuredAt;
+    return saveScrape(db, 1, parsed, NOW); // NOW = 2026-11-06 15:24:00 WIB
+  };
+
+  assert.equal(scrapeAt("2026-11-06 13:00:00").active, true);
+  assert.equal(isActive(), 1);
+
+  assert.equal(scrapeAt("2026-11-05 15:24:00").active, true); // exactly 24 h: not "more than"
+  assert.equal(isActive(), 1);
+
+  assert.equal(scrapeAt("2026-11-05 15:23:00").active, false); // 24 h 1 min
+  assert.equal(isActive(), 0);
+
+  assert.equal(scrapeAt("2026-11-06 14:00:00").active, true); // reports again -> active again
+  assert.equal(isActive(), 1);
 });

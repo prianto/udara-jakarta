@@ -1,10 +1,11 @@
+-- All timestamps in this database are WIB (UTC+7) wall-clock time, "YYYY-MM-DD HH:MM:SS".
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS operators (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   name       TEXT NOT NULL UNIQUE,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now'))
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', '+7 hours')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', '+7 hours'))
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS stations (
@@ -21,8 +22,8 @@ CREATE TABLE IF NOT EXISTS stations (
   is_active          INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
   tahun_pengadaan    INTEGER CHECK (tahun_pengadaan BETWEEN 1900 AND 2100),
   perawatan_terakhir TEXT,                            -- date, YYYY-MM-DD
-  created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now')),
-  updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now'))
+  created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', '+7 hours')),
+  updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', '+7 hours'))
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_stations_operator_id ON stations (operator_id);
@@ -41,7 +42,7 @@ CREATE TABLE IF NOT EXISTS measurements (
   no2_index   INTEGER,
   o3_index    INTEGER,
   ispu_index  INTEGER,
-  measured_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now'))
+  measured_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', '+7 hours'))
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_measurements_station_time ON measurements (station_id, measured_at);
@@ -51,12 +52,12 @@ CREATE TRIGGER IF NOT EXISTS trg_operators_updated_at
 AFTER UPDATE ON operators
 FOR EACH ROW WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-  UPDATE operators SET updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now') WHERE id = NEW.id;
+  UPDATE operators SET updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', '+7 hours') WHERE id = NEW.id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_stations_updated_at
 AFTER UPDATE ON stations
 FOR EACH ROW WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-  UPDATE stations SET updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now') WHERE id = NEW.id;
+  UPDATE stations SET updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now', '+7 hours') WHERE id = NEW.id;
 END;
