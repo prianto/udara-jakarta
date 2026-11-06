@@ -1,0 +1,39 @@
+{
+  "name": "udara",
+  "version": "1.0.0",
+  "description": "Fetch web pages, extract data by pattern, store it in SQLite, and serve it through an HTTP API",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "scrape": "node src/scrape.js",
+    "db:init": "node scripts/init-db.js db/data.sqlite",
+    "db:example": "node scripts/init-db.js db/data.sqlite.example",
+    "test": "node --test"
+  },
+  "keywords": [
+    "scraper",
+    "sqlite",
+    "api",
+    "cheerio",
+    "fastify"
+  ],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "dependencies": {
+    "cheerio": "^1.1.0",
+    "fastify": "^5.2.0"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.16.1",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "pnpm@12.16.1",
+  "type": "module"
+}
