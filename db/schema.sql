@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS measurements (
   so2_index   INTEGER,
   no2_index   INTEGER,
   o3_index    INTEGER,
+  ispu_index  INTEGER,
   measured_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now'))
 ) STRICT;
 

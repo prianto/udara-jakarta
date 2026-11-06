@@ -3,13 +3,11 @@
 //
 // Stations are matched by `uuid` (taken from the row's data-redirect="/spku/<uuid>"),
 // so running the script again updates existing rows instead of duplicating them.
-import { DatabaseSync } from "node:sqlite";
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import * as cheerio from "cheerio";
+import { fetchHtml, getBaseUrl, openDb } from "./lib/common.js";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const UUID_RE =
   /\/spku\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
 
@@ -59,15 +57,6 @@ export function parseStations(html) {
   return { stations, skipped };
 }
 
-async function fetchHtml(url) {
-  const res = await fetch(url, {
-    headers: { "user-agent": "udara-scraper/1.0", accept: "text/html" },
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!res.ok) throw new Error(`GET ${url} failed: HTTP ${res.status}`);
-  return res.text();
-}
-
 /**
  * Insert new stations and update changed ones. Rows whose scraped values did not
  * change are left untouched, so `updated_at` only moves when something really changed.
@@ -113,20 +102,7 @@ export function saveStations(db, stations) {
 }
 
 async function main() {
-  try {
-    process.loadEnvFile(resolve(root, ".env"));
-  } catch (err) {
-    if (err.code !== "ENOENT") throw err; // no .env is fine if the variable is already set
-  }
-
-  const base = process.env.DATASOURCE_BASEURL;
-  if (!base) throw new Error("DATASOURCE_BASEURL is not set (add it to .env)");
-
-  const dbPath = resolve(root, "db/data.sqlite");
-  if (!existsSync(dbPath))
-    throw new Error(`${dbPath} not found, run "pnpm db:init" first`);
-
-  const url = new URL("lokasi-spku", base.endsWith("/") ? base : `${base}/`);
+  const url = new URL("lokasi-spku", getBaseUrl());
   console.log(`Fetching ${url} ...`);
   const { stations, skipped } = parseStations(await fetchHtml(url));
 
@@ -140,8 +116,7 @@ async function main() {
       `Skipped ${skipped} row(s) without a valid /spku/<uuid> link.`,
     );
 
-  const db = new DatabaseSync(dbPath);
-  db.exec("PRAGMA foreign_keys = ON");
+  const db = openDb();
   try {
     const { inserted, updated, unchanged } = saveStations(db, stations);
     console.log(
