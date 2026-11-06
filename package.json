@@ -7,6 +7,7 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "scrape": "node src/scrape.js",
+    "scrape:stations": "node scripts/scrape-stations.js",
     "db:init": "node scripts/init-db.js db/data.sqlite",
     "db:example": "node scripts/init-db.js db/data.sqlite.example",
     "test": "node --test"

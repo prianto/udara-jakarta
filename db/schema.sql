@@ -30,7 +30,7 @@ CREATE INDEX IF NOT EXISTS idx_stations_kota        ON stations (kota);
 
 CREATE TABLE IF NOT EXISTS measurements (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  station_id  INTEGER NOT NULL REFERENCES stations (id) ON UPDATE CASCADE ON DELETE CASCADE,
+  station_id  INTEGER REFERENCES stations (id) ON UPDATE CASCADE ON DELETE SET NULL,
   wind_speed  REAL,
   humidity    REAL,
   temperature REAL,
