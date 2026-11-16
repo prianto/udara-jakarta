@@ -1,5 +1,5 @@
 // Start the API and the scraper scheduler.
-// Configure with PORT (default 3000), HOST (default 127.0.0.1) and SCHEDULER=off to skip the scheduler.
+// Configure with PORT (default 4000), HOST (default 127.0.0.1) and SCHEDULER=off to skip the scheduler.
 import { loadEnv } from "./config.js";
 import { openDb } from "./db.js";
 import { buildApp } from "./app.js";
@@ -7,11 +7,11 @@ import { startScheduler } from "./scheduler.js";
 
 loadEnv();
 
-const port = Number(process.env.PORT ?? 3000);
+const port = Number(process.env.PORT ?? 4000);
 const host = process.env.HOST ?? "127.0.0.1";
 
 const db = openDb();
-const app = buildApp({ db, logger: true });
+const app = await buildApp({ db, logger: true });
 app.addHook("onClose", async () => db.close());
 
 // Background scraping (node-cron). Set SCHEDULER=off to run the API only.

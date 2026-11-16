@@ -6,7 +6,6 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "scrape": "node src/scrape.js",
     "scrape:stations": "node scripts/scrape-stations.js",
     "scrape:measurements": "node scripts/scrape-measurements.js",
     "db:init": "node scripts/init-db.js db/data.sqlite",
@@ -26,9 +25,11 @@
     "node": ">=22.13.0"
   },
   "dependencies": {
+    "@fastify/cors": "^11.4.1",
     "cheerio": "^1.1.0",
     "fastify": "^5.2.0",
-    "node-cron": "^4.6.0"
+    "node-cron": "^4.6.0",
+    "pngjs": "^7.0.0"
   },
   "devEngines": {
     "packageManager": {

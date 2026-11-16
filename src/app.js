@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import cors from "@fastify/cors";
 import {
   addHours,
   isRealDate,
@@ -7,6 +8,7 @@ import {
   toWibIso,
   wibNow,
 } from "./time.js";
+import basemap from "./basemap.js";
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
@@ -57,8 +59,13 @@ function toRecord(row) {
  * @param {() => Date} [options.clock] current time, injectable for tests
  * @param {boolean|object} [options.logger]
  */
-export function buildApp({ db, clock = () => new Date(), logger = false }) {
+export async function buildApp({ db, clock = () => new Date(), logger = false }) {
   const app = Fastify({ logger });
+
+  await app.register(cors, {
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  });
 
   // `from` and `until` are WIB strings; `window` (see WINDOWS) says which ends are included
   function readings(from, until, station, window = "halfOpen") {
@@ -143,6 +150,13 @@ export function buildApp({ db, clock = () => new Date(), logger = false }) {
       return readings(from, addHours(from, 24), request.query.station);
     },
   );
+
+  app.register(basemap, {
+    prefix: "/api/basemap",
+    coreMiles: 0.1,
+    transparentMiles: 9,
+    maxAlpha: 0.6,
+  });
 
   return app;
 }

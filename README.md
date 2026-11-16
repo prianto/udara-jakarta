@@ -37,7 +37,7 @@ Settings come from `.env` in the project root or from real environment variables
 | Variable             | Default                   | Meaning                                                      |
 | -------------------- | ------------------------- | ------------------------------------------------------------ |
 | `DATASOURCE_BASEURL` | _(required for scraping)_ | Base URL of the data source, with or without trailing slash  |
-| `PORT`               | `3000`                    | API port                                                     |
+| `PORT`               | `4000`                    | API port                                                     |
 | `HOST`               | `127.0.0.1`               | API bind address (use `0.0.0.0` to listen on all interfaces) |
 | `SCHEDULER`          | _(on)_                    | Set to `off` to run the API without the scheduler            |
 | `REQUEST_DELAY_MS`   | `300`                     | Pause between station requests in `scrape-measurements`      |

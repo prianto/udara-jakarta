@@ -1,5 +1,6 @@
 .env
 node_modules/
+*.tmp
 
 # local database (use db/data.sqlite.example as the template)
 db/data.sqlite
